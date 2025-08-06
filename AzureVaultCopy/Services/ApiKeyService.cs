@@ -26,8 +26,10 @@ namespace AzureVaultCopy.Services
             {
                 KeyName = key.KeyName,
                 LastRotated = key.LastRotated,
-                RotationHours = key.RotationHours
+                RotationMinutes = key.RotationMinutes,
+                RotationCount = key.RotationCount
             };
+
         }
 
         public async Task<bool> ValidateKeyAsync(string providedKey)

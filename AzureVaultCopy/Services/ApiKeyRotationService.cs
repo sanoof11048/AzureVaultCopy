@@ -1,8 +1,6 @@
 ﻿using AzureVaultCopy.Data;
 using AzureVaultCopy.Models;
 using Dapper;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -75,6 +73,7 @@ public class ApiKeyRotationService : BackgroundService
                     RotationMinutes = 1
                 });
 
+
                 _logger.LogInformation("Default API key created and inserted.");
                 return; 
             }
@@ -82,7 +81,8 @@ public class ApiKeyRotationService : BackgroundService
 
             const string query = @"
                 SELECT * FROM ApiKeyConfigs 
-                WHERE DATEADD(HOUR, RotationMinutes, LastRotated) <= @Now";
+                WHERE DATEADD(MINUTE, RotationMinutes, LastRotated) <= @Now";
+
 
             var expiringKeys = (await conn.QueryAsync<ApiKey>(query, new { Now = now })).ToList();
 
@@ -92,8 +92,11 @@ public class ApiKeyRotationService : BackgroundService
                 var newHashed = HashKey(newRawKey);
 
                 const string update = @"UPDATE ApiKeyConfigs 
-                                        SET KeyValue = @KeyValue, LastRotated = @Now 
-                                        WHERE ConfigId = @ConfigId";
+                        SET KeyValue = @KeyValue, LastRotated = @Now, RotationCount = RotationCount + 1 
+                        WHERE ConfigId = @ConfigId";
+
+                _logger.LogDebug($"Updating key: {key.KeyName}, ID: {key.ConfigId}");
+
 
                 await conn.ExecuteAsync(update, new
                 {
@@ -101,6 +104,7 @@ public class ApiKeyRotationService : BackgroundService
                     Now = now,
                     ConfigId = key.ConfigId
                 });
+
 
                 _logger.LogInformation($"API Key '{key.KeyName}' rotated at {now}.");
             }

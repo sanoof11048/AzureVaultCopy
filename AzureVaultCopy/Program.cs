@@ -11,10 +11,13 @@ namespace AzureVaultCopy
             var builder = WebApplication.CreateBuilder(args);
             DotNetEnv.Env.Load();
 
+            Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
             // Add services to the container.
             builder.Services.AddSingleton<DapperContext>();
             builder.Services.AddHostedService<ApiKeyRotationService>();
             builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
+
+
 
             builder.Services.AddControllers();
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -28,7 +31,7 @@ namespace AzureVaultCopy
                 app.UseSwaggerUI();
 
 
-            app.UseHttpsRedirection();
+            //app.UseHttpsRedirection();
 
             app.UseAuthorization();
 

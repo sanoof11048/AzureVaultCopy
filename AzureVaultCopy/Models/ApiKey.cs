@@ -6,6 +6,9 @@
         public string KeyName { get; set; }
         public string KeyValue { get; set; }
         public DateTime LastRotated { get; set; }
-        public short RotationHours { get; set; }
+        public short RotationMinutes { get; set; } 
+        public int RotationCount { get; set; }
+
     }
+
 }
