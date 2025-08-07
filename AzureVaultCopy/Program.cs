@@ -11,11 +11,14 @@ namespace AzureVaultCopy
             var builder = WebApplication.CreateBuilder(args);
             DotNetEnv.Env.Load();
 
-            Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
-            // Add services to the container.
-            builder.Services.AddSingleton<DapperContext>();
-            builder.Services.AddHostedService<ApiKeyRotationService>();
+            var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
+                ?? throw new InvalidOperationException("Missing DB connection string");
+
+            builder.Services.AddSingleton(new DapperContext(connectionString));
+
             builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
+            builder.Services.AddSingleton<IHostedService, ApiKeyRotationService>();
+            builder.Services.AddSingleton<IServiceScopeFactory>(sp => sp.GetRequiredService<IServiceScopeFactory>());
 
 
 
@@ -31,7 +34,7 @@ namespace AzureVaultCopy
                 app.UseSwaggerUI();
 
 
-            //app.UseHttpsRedirection();
+            app.UseHttpsRedirection();
 
             app.UseAuthorization();
 

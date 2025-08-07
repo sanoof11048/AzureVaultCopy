@@ -1,23 +1,19 @@
-﻿using AzureVaultCopy.Data;
-using AzureVaultCopy.Models;
+﻿using AzureVaultCopy.Models;
 using AzureVaultCopy.Services;
-using Dapper;
+using System.Reflection;
 
 public class ApiKeyRotationService : BackgroundService
 {
     private readonly ILogger<ApiKeyRotationService> _logger;
-    private readonly IApiKeyService _apiKeyService;
-    private readonly DapperContext _context;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(1);
 
     public ApiKeyRotationService(
         ILogger<ApiKeyRotationService> logger,
-        IApiKeyService apiKeyService,
-        DapperContext context)
+        IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
-        _apiKeyService = apiKeyService;
-        _context = context;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -28,7 +24,9 @@ public class ApiKeyRotationService : BackgroundService
         {
             try
             {
-                await RotateKeysIfExpiredAsync();
+                using var scope = _scopeFactory.CreateScope();
+                var apiKeyService = scope.ServiceProvider.GetRequiredService<IApiKeyService>();
+                await RotateKeysIfExpiredAsync(apiKeyService);
             }
             catch (Exception ex)
             {
@@ -41,29 +39,31 @@ public class ApiKeyRotationService : BackgroundService
         _logger.LogInformation("🛑 API Key Rotation Service stopped.");
     }
 
-    private async Task RotateKeysIfExpiredAsync()
+    private async Task RotateKeysIfExpiredAsync(IApiKeyService apiKeyService)
     {
-        using var conn = _context.CreateConnection();
         var now = DateTime.UtcNow;
-
-        var keys = (await conn.QueryAsync<ApiKey>("SELECT * FROM ApiKeyConfigs")).ToList();
+        var keys = (await apiKeyService.GetAllKeyMetadataAsync()).ToList();
 
         if (!keys.Any())
         {
             _logger.LogWarning("⚠️ No keys found. Creating default key.");
-            var raw = await _apiKeyService.CreateDefaultKeyAsync();
-            _logger.LogInformation($"✅ Default key created. Raw key (store securely): {raw}");
+            var raw = await apiKeyService.CreateDefaultKeyAsync();
+            _logger.LogInformation($"✅ Default key created. Raw key (store securely)");
             return;
         }
 
-        const string rotationSql = @"SELECT * FROM ApiKeyConfigs 
-                                     WHERE DATEADD(MINUTE, RotationMinutes, LastRotated) <= @Now";
-
-        var expiredKeys = (await conn.QueryAsync<ApiKey>(rotationSql, new { Now = now })).ToList();
+        var expiredKeys = keys
+            .Where(k => k.LastRotated.AddMinutes(k.RotationMinutes) <= now)
+            .ToList();
 
         foreach (var key in expiredKeys)
         {
-            await _apiKeyService.RotateKeyAsync(key, now);
+            await apiKeyService.RotateKeyAsync(new ApiKey
+            {
+                ConfigId = key.ConfigId,
+                KeyName = key.KeyName
+            }, now);
+
             _logger.LogInformation($"🔁 Key '{key.KeyName}' rotated. New key (store securely)");
         }
 

@@ -7,11 +7,9 @@ namespace AzureVaultCopy.Data
     {
         private readonly string _connectionString;
 
-        public DapperContext(IConfiguration config)
+        public DapperContext(string connectionString)
         {
-            _connectionString = config.GetConnectionString("DefaultConnection");
-            if (string.IsNullOrWhiteSpace(_connectionString))
-                throw new InvalidOperationException("Database connection string not found in environment variables.");
+            _connectionString = connectionString;
         }
 
         public IDbConnection CreateConnection() => new SqlConnection(_connectionString);

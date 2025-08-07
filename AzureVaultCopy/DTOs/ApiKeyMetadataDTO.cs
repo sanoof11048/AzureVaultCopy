@@ -2,6 +2,7 @@
 {
     public class ApiKeyMetadataDTO
     {
+        public int ConfigId { get; set; }
         public string KeyName { get; set; }
         public DateTime LastRotated { get; set; }
         public short RotationMinutes { get; set; }

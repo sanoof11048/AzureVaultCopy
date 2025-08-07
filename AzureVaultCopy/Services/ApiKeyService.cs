@@ -39,12 +39,13 @@ namespace AzureVaultCopy.Services
 
         public async Task<bool> ValidateKeyAsync(string rawKey)
         {
-            var hashedKey = ApiKeyHelper.HashKey(rawKey);
-            const string sql = "SELECT COUNT(1) FROM ApiKeyConfigs WHERE KeyValue = @KeyValue";
+            //var hashedKey = ApiKeyHelper.HashKey(rawKey);
+            const string sql = "SELECT COUNT(*) FROM ApiKeyConfigs WHERE KeyValue = @KeyValue";
             using var conn = _context.CreateConnection();
-            var count = await conn.ExecuteScalarAsync<int>(sql, new { KeyValue = hashedKey });
+            var count = await conn.QuerySingleAsync<int>(sql, new { KeyValue = rawKey });
             return count > 0;
         }
+
 
         public async Task<IEnumerable<ApiKeyMetadataDTO>> GetAllKeyMetadataAsync()
         {
@@ -54,23 +55,32 @@ namespace AzureVaultCopy.Services
 
             return keys.Select(key => new ApiKeyMetadataDTO
             {
+                ConfigId = key.ConfigId,
                 KeyName = key.KeyName,
                 LastRotated = key.LastRotated,
                 RotationMinutes = key.RotationMinutes,
                 RotationCount = key.RotationCount
             });
+
         }
 
         public async Task<string?> CreateDefaultKeyAsync()
         {
             const string defaultName = "DefaultKey";
+            using var conn = _context.CreateConnection();
+            var existing = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM ApiKeyConfigs WHERE KeyName = @KeyName",
+                new { KeyName = defaultName });
+
+            if (existing > 0)
+                return null;
+
             var rawKey = ApiKeyHelper.GenerateKey();
             var hashedKey = ApiKeyHelper.HashKey(rawKey);
 
             const string sql = @"INSERT INTO ApiKeyConfigs (KeyName, KeyValue, LastRotated, RotationMinutes)
                                  VALUES (@KeyName, @KeyValue, @LastRotated, @RotationMinutes)";
 
-            using var conn = _context.CreateConnection();
             await conn.ExecuteAsync(sql, new
             {
                 KeyName = defaultName,
