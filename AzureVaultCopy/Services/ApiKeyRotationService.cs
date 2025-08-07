@@ -1,134 +1,73 @@
 ﻿using AzureVaultCopy.Data;
 using AzureVaultCopy.Models;
+using AzureVaultCopy.Services;
 using Dapper;
-using System.Security.Cryptography;
-using System.Text;
 
 public class ApiKeyRotationService : BackgroundService
 {
     private readonly ILogger<ApiKeyRotationService> _logger;
+    private readonly IApiKeyService _apiKeyService;
     private readonly DapperContext _context;
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(1);
 
-    public ApiKeyRotationService(ILogger<ApiKeyRotationService> logger, DapperContext context)
+    public ApiKeyRotationService(
+        ILogger<ApiKeyRotationService> logger,
+        IApiKeyService apiKeyService,
+        DapperContext context)
     {
         _logger = logger;
+        _apiKeyService = apiKeyService;
         _context = context;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("API Key Rotation Service started.");
+        _logger.LogInformation("🔄 API Key Rotation Service started.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await RotateExpiredKeysAsync();
+                await RotateKeysIfExpiredAsync();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error occurred during API key rotation.");
+                _logger.LogError(ex, "❌ Error during key rotation.");
             }
 
-            try
-            {
-                await Task.Delay(_interval, stoppingToken);
-            }
-            catch (TaskCanceledException)
-            {
-                _logger.LogInformation("API Key Rotation Service cancellation requested.");
-                break;
-            }
+            await Task.Delay(_interval, stoppingToken);
         }
 
-        _logger.LogInformation("API Key Rotation Service stopped.");
+        _logger.LogInformation("🛑 API Key Rotation Service stopped.");
     }
 
-    private async Task RotateExpiredKeysAsync()
+    private async Task RotateKeysIfExpiredAsync()
     {
-        try
+        using var conn = _context.CreateConnection();
+        var now = DateTime.UtcNow;
+
+        var keys = (await conn.QueryAsync<ApiKey>("SELECT * FROM ApiKeyConfigs")).ToList();
+
+        if (!keys.Any())
         {
-            using var conn = _context.CreateConnection();
-
-            var now = DateTime.UtcNow;
-
-            var existingKeys = await conn.QueryAsync<ApiKey>("SELECT * FROM ApiKeyConfigs");
-
-            if (!existingKeys.Any())
-            {
-                _logger.LogWarning("No API keys found. Creating a default key.");
-
-                var rawKey = GenerateApiKey();
-                var hashedKey = HashKey(rawKey);
-
-                const string insert = @"INSERT INTO ApiKeyConfigs (KeyName, KeyValue, LastRotated, RotationMinutes)
-                                        VALUES (@KeyName, @KeyValue, @LastRotated, @RotationMinutes)";
-
-                await conn.ExecuteAsync(insert, new
-                {
-                    KeyName = "DefaultKey",
-                    KeyValue = hashedKey,
-                    LastRotated = now,
-                    RotationMinutes = 1
-                });
-
-
-                _logger.LogInformation("Default API key created and inserted.");
-                return; 
-            }
-
-
-            const string query = @"
-                SELECT * FROM ApiKeyConfigs 
-                WHERE DATEADD(MINUTE, RotationMinutes, LastRotated) <= @Now";
-
-
-            var expiringKeys = (await conn.QueryAsync<ApiKey>(query, new { Now = now })).ToList();
-
-            foreach (var key in expiringKeys)
-            {
-                var newRawKey = GenerateApiKey();
-                var newHashed = HashKey(newRawKey);
-
-                const string update = @"UPDATE ApiKeyConfigs 
-                        SET KeyValue = @KeyValue, LastRotated = @Now, RotationCount = RotationCount + 1 
-                        WHERE ConfigId = @ConfigId";
-
-                _logger.LogDebug($"Updating key: {key.KeyName}, ID: {key.ConfigId}");
-
-
-                await conn.ExecuteAsync(update, new
-                {
-                    KeyValue = newHashed,
-                    Now = now,
-                    ConfigId = key.ConfigId
-                });
-
-
-                _logger.LogInformation($"API Key '{key.KeyName}' rotated at {now}.");
-            }
+            _logger.LogWarning("⚠️ No keys found. Creating default key.");
+            var raw = await _apiKeyService.CreateDefaultKeyAsync();
+            _logger.LogInformation($"✅ Default key created. Raw key (store securely): {raw}");
+            return;
         }
-        catch (Exception ex)
+
+        const string rotationSql = @"SELECT * FROM ApiKeyConfigs 
+                                     WHERE DATEADD(MINUTE, RotationMinutes, LastRotated) <= @Now";
+
+        var expiredKeys = (await conn.QueryAsync<ApiKey>(rotationSql, new { Now = now })).ToList();
+
+        foreach (var key in expiredKeys)
         {
-            _logger.LogError(ex, "Exception in RotateExpiredKeysAsync.");
-            throw;
+            await _apiKeyService.RotateKeyAsync(key, now);
+            _logger.LogInformation($"🔁 Key '{key.KeyName}' rotated. New key (store securely)");
         }
-    }
 
-    private static string GenerateApiKey(int size = 32)
-    {
-        var bytes = new byte[size];
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(bytes);
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static string HashKey(string rawKey)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = Encoding.UTF8.GetBytes(rawKey);
-        var hash = sha256.ComputeHash(bytes);
-        return Convert.ToBase64String(hash);
+        if (!expiredKeys.Any())
+            _logger.LogDebug("✔️ No keys due for rotation.");
     }
 }

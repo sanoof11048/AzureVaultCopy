@@ -1,9 +1,8 @@
 ﻿using AzureVaultCopy.Data;
 using AzureVaultCopy.DTOs;
+using AzureVaultCopy.Helper;
 using AzureVaultCopy.Models;
 using Dapper;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace AzureVaultCopy.Services
 {
@@ -18,7 +17,7 @@ namespace AzureVaultCopy.Services
 
         public async Task<ApiKeyMetadataDTO?> GetMetadataAsync(string keyName)
         {
-            var sql = "SELECT * FROM ApiKeyConfigs WHERE KeyName = @KeyName";
+            const string sql = "SELECT * FROM ApiKeyConfigs WHERE KeyName = @KeyName";
             using var conn = _context.CreateConnection();
             var key = await conn.QuerySingleOrDefaultAsync<ApiKey>(sql, new { KeyName = keyName });
 
@@ -29,31 +28,76 @@ namespace AzureVaultCopy.Services
                 RotationMinutes = key.RotationMinutes,
                 RotationCount = key.RotationCount
             };
-
         }
 
-        public async Task<bool> ValidateKeyAsync(string providedKey)
+        public async Task<string?> GetKeyValueByNameAsync(string keyName)
         {
-            var hashed = HashKey(providedKey);
-            var sql = "SELECT COUNT(1) FROM ApiKeyConfigs WHERE KeyValue = @KeyValue";
+            const string sql = "SELECT KeyValue FROM ApiKeyConfigs WHERE KeyName = @KeyName";
             using var conn = _context.CreateConnection();
-            var exists = await conn.ExecuteScalarAsync<int>(sql, new { KeyValue = hashed });
-            return exists > 0;
+            return await conn.ExecuteScalarAsync<string?>(sql, new { KeyName = keyName });
         }
 
-        private static string HashKey(string rawKey)
+        public async Task<bool> ValidateKeyAsync(string rawKey)
         {
-            using var sha256 = SHA256.Create();
-            var bytes = Encoding.UTF8.GetBytes(rawKey);
-            var hash = sha256.ComputeHash(bytes);
-            return Convert.ToBase64String(hash);
+            var hashedKey = ApiKeyHelper.HashKey(rawKey);
+            const string sql = "SELECT COUNT(1) FROM ApiKeyConfigs WHERE KeyValue = @KeyValue";
+            using var conn = _context.CreateConnection();
+            var count = await conn.ExecuteScalarAsync<int>(sql, new { KeyValue = hashedKey });
+            return count > 0;
         }
-        public async Task<IEnumerable<ApiKey>> GetAllKeysAsync()
+
+        public async Task<IEnumerable<ApiKeyMetadataDTO>> GetAllKeyMetadataAsync()
         {
             const string sql = "SELECT * FROM ApiKeyConfigs";
             using var conn = _context.CreateConnection();
-            return await conn.QueryAsync<ApiKey>(sql);
+            var keys = await conn.QueryAsync<ApiKey>(sql);
+
+            return keys.Select(key => new ApiKeyMetadataDTO
+            {
+                KeyName = key.KeyName,
+                LastRotated = key.LastRotated,
+                RotationMinutes = key.RotationMinutes,
+                RotationCount = key.RotationCount
+            });
         }
 
+        public async Task<string?> CreateDefaultKeyAsync()
+        {
+            const string defaultName = "DefaultKey";
+            var rawKey = ApiKeyHelper.GenerateKey();
+            var hashedKey = ApiKeyHelper.HashKey(rawKey);
+
+            const string sql = @"INSERT INTO ApiKeyConfigs (KeyName, KeyValue, LastRotated, RotationMinutes)
+                                 VALUES (@KeyName, @KeyValue, @LastRotated, @RotationMinutes)";
+
+            using var conn = _context.CreateConnection();
+            await conn.ExecuteAsync(sql, new
+            {
+                KeyName = defaultName,
+                KeyValue = hashedKey,
+                LastRotated = DateTime.UtcNow,
+                RotationMinutes = 1
+            });
+
+            return rawKey;
+        }
+
+        public async Task RotateKeyAsync(ApiKey key, DateTime now)
+        {
+            var rawKey = ApiKeyHelper.GenerateKey();
+            var hashedKey = ApiKeyHelper.HashKey(rawKey);
+
+            const string updateSql = @"UPDATE ApiKeyConfigs 
+                                       SET KeyValue = @KeyValue, LastRotated = @Now, RotationCount = RotationCount + 1 
+                                       WHERE ConfigId = @ConfigId";
+
+            using var conn = _context.CreateConnection();
+            await conn.ExecuteAsync(updateSql, new
+            {
+                KeyValue = hashedKey,
+                Now = now,
+                ConfigId = key.ConfigId
+            });
+        }
     }
 }

@@ -1,6 +1,4 @@
-﻿using AzureVaultCopy.Models;
-using AzureVaultCopy.Services;
-using Microsoft.AspNetCore.Http;
+﻿using AzureVaultCopy.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AzureVaultCopy.Controllers
@@ -15,24 +13,37 @@ namespace AzureVaultCopy.Controllers
         {
             _service = service;
         }
-        [HttpGet("{keyName}")]
+
+        [HttpGet("{keyName}/metadata")]
         public async Task<IActionResult> GetMetadata(string keyName)
         {
             var metadata = await _service.GetMetadataAsync(keyName);
             return metadata == null ? NotFound() : Ok(metadata);
         }
 
-        [HttpPost("validate")]
-        public async Task<IActionResult> Validate([FromBody] string key)
+        [HttpGet("all")]
+        public async Task<IActionResult> GetAllMetadata()
         {
-            var isValid = await _service.ValidateKeyAsync(key);
+            var all = await _service.GetAllKeyMetadataAsync();
+            return Ok(all);
+        }
+
+        [HttpPost("validate")]
+        public async Task<IActionResult> ValidateKey([FromBody] string rawKey)
+        {
+            if (string.IsNullOrWhiteSpace(rawKey))
+                return BadRequest("Key is required.");
+
+            var isValid = await _service.ValidateKeyAsync(rawKey);
             return Ok(new { isValid });
         }
-        [HttpGet]
-        public async Task<IActionResult> GetAllKeys()
+
+        // ❗ Optional: This endpoint should only be for debugging or internal use
+        [HttpGet("{keyName}/raw")]
+        public async Task<IActionResult> GetRawKeyByName(string keyName)
         {
-            var keys = await _service.GetAllKeysAsync();
-            return Ok(keys);
+            var key = await _service.GetKeyValueByNameAsync(keyName);
+            return key == null ? NotFound() : Ok(new { KeyValue = key });
         }
     }
 }
